@@ -77,9 +77,9 @@ class PatchDataset(data.Dataset):
     def __getitem__(self, index):
         frames = self.load_patch(self.patches[index])
         aug_transform = self.get_aug_transform()
-        x1, target, x2 = (pil_to_tensor(self.crop(aug_transform(x))) for x in frames)
-        x1, x2, = self.random_temporal_order_swap(x1, x2)
-        input = torch.cat((x1, x2), dim=0)
+        r1, x1, x2, target = (pil_to_tensor(self.crop(aug_transform(x))) for x in frames)
+        #x1, x2, = self.random_temporal_order_swap(x1, x2)
+        input = torch.cat((r1, x1, x2), dim=0)
         return input, target
 
     def __len__(self):
@@ -95,8 +95,8 @@ class ValidationDataset(data.Dataset):
 
     def __getitem__(self, index):
         frames = self.tuples[index]
-        x1, target, x2 = (pil_to_tensor(self.crop(data_manager.load_img(x))) for x in frames)
-        input = torch.cat((x1, x2), dim=0)
+        r1, x1, x2, target = (pil_to_tensor(self.crop(data_manager.load_img(x, color=True))) if i >= 1 or i <= 2 else pil_to_tensor(self.crop(data_manager.load_img(x, color=False))) for i,x in enumerate(frames))
+        input = torch.cat((r1, x1, x2), dim=0)
         return input, target
 
     def __len__(self):
