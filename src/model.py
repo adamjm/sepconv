@@ -41,8 +41,6 @@ class Net(nn.Module):
         self.upsamp64 = self._upsample_module(64, 64, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
         self.upconv51_1 = self._kernel_module(64, sep_kernel, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
         self.upconv51_2 = self._kernel_module(64, sep_kernel, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
-        self.upconv51_3 = self._kernel_module(64, sep_kernel, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
-        self.upconv51_4 = self._kernel_module(64, sep_kernel, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
 
         self.pad = nn.ReplicationPad2d(sep_kernel // 2)
 
@@ -85,8 +83,14 @@ class Net(nn.Module):
 
     def forward(self, x):
 
-        i1 = x[:, :3]
-        i2 = x[:, 3:6]
+        r1 = x[:, :3]
+        #i1 = x[:, 3:6]
+        #i2 = x[:, 6:9]
+
+        ## Not sure in this part whether I should leave the reference image in or out.
+        ## At this stage I am going to remove it
+
+        x = x[:,3:9]
 
         # ------------ Contraction ------------
 
@@ -126,20 +130,15 @@ class Net(nn.Module):
 
         # ------------ Final branches ------------
 
-        k2h = self.upconv51_1(x)
+        k1h = self.upconv51_1(x)
 
-        k2v = self.upconv51_2(x)
+        k1v = self.upconv51_2(x)
 
-        k1h = self.upconv51_3(x)
-
-        k1v = self.upconv51_4(x)
-
-        padded_i2 = self.pad(i2)
-        padded_i1 = self.pad(i1)
+        padded_r1 = self.pad(r1)
 
         # ------------ Local convolutions ------------
 
-        return self.separable_conv(padded_i2, k2v, k2h) + self.separable_conv(padded_i1, k1v, k1h)
+        return self.separable_conv(padded_r1, k1v, k1h) 
 
     @staticmethod
     def _check_gradients(func):
