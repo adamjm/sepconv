@@ -7,6 +7,7 @@ import random
 import zipfile
 import numpy as np
 import cv2 as cv
+from functools import partial
 from joblib import Parallel, delayed
 from timeit import default_timer as timer
 from torchvision.transforms.functional import crop as crop_image
@@ -20,13 +21,16 @@ import src.config as config
 
 ############################################# UTILITIES #############################################
 
-def load_img(file_path):
+def load_img(file_path, color=True):
     """
     Reads an image from disk.
     :param file_path: Path to the image file
     :return: PIL.Image object
     """
-    return Image.open(file_path).convert('RGB')
+    if color:
+        return Image.open(file_path).convert('RGB')
+    else:
+        return Image.open(file_path).convert('LA').convert('RGB')
 
 
 def is_image(file_path):
@@ -68,9 +72,9 @@ def load_patch(patch):
     :param patch: Dictionary containing the details of the patch
     :return: Tuple of PIL.Image objects corresponding to the patch
     """
-    paths = (patch['left_frame'], patch['middle_frame'], patch['right_frame'])
+    paths = (patch['fcolor_frame'], patch['fgray_frame'], patch['lgray_frame'], patch['lcolor_frame'])
     i, j = (patch['patch_i'], patch['patch_j'])
-    imgs = [load_img(x) for x in paths]
+    imgs = [load_img(x, color=True) if i >= 1 or i <= 2 else load_img(x, color=False) for i,x in enumerate(paths)  ]
     h, w = config.PATCH_SIZE
     return tuple(crop_image(x, i, j, h, w) for x in imgs)
 
@@ -161,9 +165,11 @@ def tuples_from_davis(davis_dir, res='480p'):
         frame_paths = [x for x in frame_paths if is_image(x)]
         frame_paths.sort()
 
-        for i in range(len(frame_paths) // 3):
-            x1, t, x2 = frame_paths[i * 3], frame_paths[i * 3 + 1], frame_paths[i * 3 + 2]
-            tuples.append((x1, t, x2))
+        for i in range(len(frame_paths) // 2):
+            x1, x2 = frame_paths[i * 2], frame_paths[i * 2 + 1]
+            t = x2
+            c = x1 
+            tuples.append((c, x1, x2, t))
 
     return tuples
 
@@ -249,12 +255,10 @@ def _extract_patches_worker(tuples, max_per_frame=1, trials_per_tuple=100, flow_
     for tup_index in range(n_tuples):
         tup = tuples[tup_index]
 
-        left, middle, right = (load_img(x) for x in tup)
-        img_w, img_h = left.size
+        files_ = (load_img(x, color=True) if i >= 1 or i <= 2 else load_img(x, color=False) for i,x in enumerate(tup)  )
+        img_w, img_h = files_[0].size
 
-        left = pil_to_numpy(left)
-        middle = pil_to_numpy(middle)
-        right = pil_to_numpy(right)
+        files_ = (pil_to_numpy(file_) for file_ in files_)
 
         selected_patches = []
 
@@ -263,24 +267,27 @@ def _extract_patches_worker(tuples, max_per_frame=1, trials_per_tuple=100, flow_
             i = random.randint(0, img_h - patch_h)
             j = random.randint(0, img_w - patch_w)
 
-            left_patch = left[i:i + patch_h, j:j + patch_w, :]
-            right_patch = right[i:i + patch_h, j:j + patch_w, :]
-            middle_patch = middle[i:i + patch_h, j:j + patch_w, :]
+            def numpy_to_patch(x, i, j, patch_h, patch_w):
+                return x[i:i + patch_h, j:j + patch_w, :]
 
-            if is_jumpcut(left_patch, middle_patch, jumpcut_threshold) or \
-                    is_jumpcut(middle_patch, right_patch, jumpcut_threshold):
+            n2p = partial(numpy_to_patch, i=i, j=j, patch_h=patch_h, patch_w=patch_w)
+
+            file_patches = (n2p(file_) for file_ in files_)
+
+            if is_jumpcut(file_patches[0], file_patches[3], jumpcut_threshold):
                 jumpcuts += 1
                 continue
 
-            avg_flow = simple_flow(left_patch, right_patch)
+            avg_flow = simple_flow(file_patches[0], file_patches[3])
             if random.random() > avg_flow / flow_threshold:
                 flowfiltered += 1
                 continue
 
             selected_patches.append({
-                "left_frame": tup[0],
-                "middle_frame": tup[1],
-                "right_frame": tup[2],
+                "fcolor_frame": tup[0],
+                "fgray_frame": tup[1],
+                "lgray_frame": tup[2],
+                "lcolor_frame": tup[3],
                 "patch_i": i,
                 "patch_j": j,
                 "avg_flow": avg_flow
@@ -344,9 +351,11 @@ def get_cached_patches(dataset_dir=None):
 
     tuples = []
 
-    for i in range(len(frame_paths) // 3):
-        x1, t, x2 = frame_paths[i * 3], frame_paths[i * 3 + 1], frame_paths[i * 3 + 2]
-        tuples.append((x1, t, x2))
+    for i in range(len(frame_paths) // 2):
+        x1, x2 = frame_paths[i * 2], frame_paths[i * 2 + 1]
+        t = x2
+        c = x1 
+        tuples.append((c, x1, x2, t))
 
     return tuples
 
@@ -360,9 +369,9 @@ def _cache_patches_worker(cache_dir, patches):
     for p in patches:
         patch_id = str(random.randint(1e10, 1e16))
         frames = load_patch(p)
-        for i in range(3):
+        for i, frame in enumerate(frames):
             file_name = '{}_{}.jpg'.format(patch_id, i)
-            frames[i].save(join(cache_dir, file_name))
+            frame.save(join(cache_dir, file_name))
 
 
 def _cache_patches(cache_dir, patches, workers=0):
